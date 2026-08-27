@@ -48,7 +48,8 @@ cp .env.example .env
 # Editar .env con tu client_id y client_secret de Keycloak
 
 # Iniciar el servidor
-uv run lswms-mcp
+uv run src/lswms_mcp/server.py
+uv run src\lswms_mcp\server.py
 ```
 
 ## Variables de entorno
