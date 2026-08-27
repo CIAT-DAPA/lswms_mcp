@@ -34,29 +34,30 @@ MongoDB + GeoServer
 ### Setup
 
 ```bash
-# Clonar el repositorio
+# Clone repository
 git clone https://github.com/CIAT-DAPA/lswms_mcp.git
 cd lswms_mcp
 
-# Instalar dependencias
-source .venv/bin/activate # Linux
-.venv\Scripts\activate # Windows
+# Install dependencies
+# NOt active the venv manually: uv creates and manage.
+# In Windows, has the venv activate stock .venv\Scripts\ and uv sync fail
+# with "Access is denied (os error 5)" to try to create.
+uv python install 3.10   # Just if you don't have Python 3.10
 uv sync
 
-# Configurar credenciales
+# Configure env
 cp .env.example .env
-# Editar .env con tu client_id y client_secret de Keycloak
 
-# Iniciar el servidor
+# Start server
 uv run lswms-mcp
 ```
 
-## Variables de entorno
+## Variables
 
-| Variable | Requerida | Default | Descripción |
-|----------|-----------|---------|-------------|
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
 
-## Estructura del proyecto
+## Project structured
 
 ```
 lswms_mcp/
@@ -87,9 +88,6 @@ uv run pytest -v --tb=short
 
 # Linting
 uv run ruff check .
-
-# Type checking
-uv run mypy aclimate_sdk aclimate_mcp
 
 # Dev
 mcp dev "./src/lswms_mcp/server.py"

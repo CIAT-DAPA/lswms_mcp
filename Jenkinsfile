@@ -41,8 +41,6 @@ pipeline {
                 script {
                     sshCommand remote: remote, command: """
                         cd /var/www/waterpoints_mcp/lswms_mcp
-                        #source /home/lamardeployer/miniforge3/etc/profile.d/conda.sh
-                        #conda activate python3_10
                         uv sync --no-dev
                     """
                 }
@@ -53,8 +51,8 @@ pipeline {
                 script {
                     sshCommand remote: remote, command: """
                         cd /var/www/waterpoints_mcp/lswms_mcp
-                        source .venv/bin/activate
                         fuser -k 5004/tcp || true
+                        source .venv/bin/activate
                         nohup uv run lswms-mcp ./mcp.log 2>&1 < /dev/null &
                     """
                 }
