@@ -87,7 +87,6 @@ class WaterpointClient:
     async def get_waterpoints(self) -> list[Waterpoints]:
         response_data = await self.get("/waterpoints")
         return TypeAdapter(list[Waterpoints]).validate_python(response_data)
-        return TypeAdapter(list([Waterpoints]).validate_python(await self.get("/waterpoints")))
 
 _client: WaterpointClient | None = None
 _client_lock = asyncio.Lock()
