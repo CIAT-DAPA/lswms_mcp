@@ -6,7 +6,6 @@ class Settings(BaseSettings):
         case_sensitive=False,
         )
     api_base_url:str = "https://webapi.waterpointsmonitoring.net/api/v1/"
-
     client_id: str | None = None
     client_secret: str | None = None
     

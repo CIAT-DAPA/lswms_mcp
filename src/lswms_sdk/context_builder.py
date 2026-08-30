@@ -1,0 +1,400 @@
+"""
+Waterpoint SDK ContextBuilder.
+
+Transforms raw Waterpoint API responses into LLM-readable narrative context.
+The builder supports multiple output languages through lightweight templates.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any, Literal
+
+from lswms_sdk.lswms_models import (
+    Waterpoints,Monitored,Adm2,Advisory,
+
+)
+
+SupportedLanguage = Literal["en", "or"]
+
+MONTH_NAMES: dict[str, dict[int, str]] = {
+    "en": {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December",
+    },
+        "or": {
+    },
+}
+
+TEXT: dict[str, dict[str, str]] = {
+       "en": {
+        "no_countries": "No countries were found in AClimate.",
+        "countries_title": "Countries available in AClimate:",
+        "no_locations": "No locations were found with that name.",
+        "locations_found": "Found {count} location(s):",
+        "municipality": "Municipality",
+        "region": "Region",
+        "country": "Country",
+        "coordinates": "Coordinates",
+        "altitude": "Altitude",
+        "no_current_data": "No recent monitoring data was found.",
+        "current_conditions": "Current conditions ({count} locations):",
+        "no_recent_data": "No recent data",
+        "unknown_date": "unknown date",
+        "latest_measurement": "Latest measurement",
+        "no_data": "no data",
+        "no_daily": "No daily historical data was found for the period.",
+        "daily_title": "Daily historical data - {location}:",
+        "location_fallback": "location {id}",
+        "period": "Period",
+        "days": "days",
+        "average": "Average",
+        "minimum": "Minimum",
+        "maximum": "Maximum",
+        "on": "on",
+        "no_monthly": "No monthly historical data was found.",
+        "monthly_title": "Monthly historical data - {location}:",
+        "monthly_average": "Monthly average",
+        "lowest_month": "Lowest month",
+        "highest_month": "Highest month",
+        "no_climatology": "No climatology data was found for this location.",
+        "climatology_title": "Historical climatology (climate normals) - {location}:",
+        "variable": "variable",
+        "peak": "Peak",
+        "no_extremes": "No historical extremes were found.",
+        "daily_extremes_title": "Historical extremes (daily) - {location}:",
+        "no_clim_extremes": "No climatology extremes were found.",
+        "clim_extremes_title": "Climatological extremes - {location}:",
+        "in_month": "in",
+        "indicator_default": "the indicator",
+        "indicator": "indicator",
+        "no_indicator_records": "No historical records were found for {name}.",
+        "indicator_title": "Agroclimatic indicator: {name} [{unit}]",
+        "location": "Location",
+        "records": "Records",
+        "stat_summary": "Statistical summary:",
+        "max_value": "Maximum value",
+        "min_value": "Minimum value",
+        "historical_series": "Historical series:",
+        "period_label": "period",
+        "no_indicator_extremes": "No historical indicator extremes were found.",
+        "indicator_extremes_title": "Historical indicator extremes - {location}:",
+        "no_recommendations": "No recommendations were found for this indicator in this country.",
+        "recommendations": "Agronomic recommendations:",
+        "features": "Indicator features:",
+        "no_extra_info": "No additional information.",
+        "no_indicators": "No indicators were found for this country.",
+        "indicators_catalog": "Available agroclimatic indicators ({count}):",
+    }
+}
+
+
+class ContextBuilder:
+    """Convert Waterpoint API responses into LLM-readable text.
+
+    Parameters
+    ----------
+    language:
+        ``"en"`` is currently supported while ``"or"`` will be incorporated in the next phase.
+    """
+
+    def __init__(self, language: SupportedLanguage = "en") -> None:
+        self.language = self._normalize_language(language)
+
+    @staticmethod
+    def _normalize_language(language: str) -> SupportedLanguage:
+        normalized = language.lower().split("-")[0]
+        if normalized not in TEXT:
+            supported = ", ".join(sorted(TEXT))
+            raise ValueError(f"Unsupported language '{language}'. Supported languages: {supported}")
+        return normalized  # type: ignore[return-value]
+
+    def with_language(self, language: SupportedLanguage) -> "ContextBuilder":
+        """Return a new builder with the requested language."""
+        return ContextBuilder(language=language)
+
+    def set_language(self, language: SupportedLanguage) -> None:
+        """Update the builder output language in place."""
+        self.language = self._normalize_language(language)
+
+    @property
+    def months(self) -> dict[int, str]:
+        return MONTH_NAMES[self.language]
+
+    def advisory_t(self, key: str, **kwargs: Any) -> str:
+        return TEXT[self.language][key].format(**kwargs)
+
+    def _location_name(self, location_name: str | None, location_id: int) -> str:
+        return location_name or self.t("location_fallback", id=location_id)
+
+    # Geo
+
+    def countries_summary(self, countries: list[Country]) -> str:
+        if not countries:
+            return self.t("no_countries")
+        lines = [self.t("countries_title")]
+        for c in countries:
+            lines.append(f"  - {c.name} (id={c.id}, iso2={c.iso2})")
+        return "\n".join(lines)
+
+    def locations_summary(self, locations: list[Location]) -> str:
+        if not locations:
+            return self.t("no_locations")
+
+        lines = [self.t("locations_found", count=len(locations))]
+        for loc in locations:
+            parts = [f"  - [{loc.id}] {loc.name}"]
+            if loc.admin2_name:
+                parts.append(f"    {self.t('municipality')}: {loc.admin2_name}")
+            if loc.admin1_name:
+                parts.append(f"    {self.t('region')}: {loc.admin1_name}")
+            if loc.country_name:
+                parts.append(f"    {self.t('country')}: {loc.country_name}")
+            if loc.latitude is not None and loc.longitude is not None:
+                parts.append(f"    {self.t('coordinates')}: {loc.latitude:.4f}, {loc.longitude:.4f}")
+            if loc.altitude is not None:
+                parts.append(f"    {self.t('altitude')}: {loc.altitude:.0f} msnm")
+            lines.extend(parts)
+        return "\n".join(lines)
+
+    def current_conditions_summary(self, locations_data: list[LocationWithData]) -> str:
+        if not locations_data:
+            return self.t("no_current_data")
+
+        lines = [self.t("current_conditions", count=len(locations_data))]
+        for item in locations_data:
+            name = item.name
+            admin1 = item.admin1_name or ""
+            country = item.country_name or ""
+            loc_id = item.id
+            header = f"\n  {name}"
+            if admin1:
+                header += f", {admin1}"
+            if country:
+                header += f" ({country}) - id={loc_id}"
+            lines.append(header)
+
+            latest = item.latest_data
+            if not latest:
+                lines.append(f"    {self.t('no_recent_data')}")
+                continue
+
+            d = latest.date or self.t("unknown_date")
+            lines.append(f"    {self.t('latest_measurement')}: {d}")
+
+            for measure in latest.measures:
+                value = measure.value
+                unit = measure.measure_unit or ""
+                mname = measure.measure_name or measure.measure_short_name or "?"
+                if value is not None:
+                    lines.append(f"    - {mname}: {value:.1f} {unit}")
+                else:
+                    lines.append(f"    - {mname}: {self.t('no_data')}")
+
+        return "\n".join(lines)
+
+    # Historical climate
+
+    def daily_climate_summary(self, records: list[ClimateHistoricalDateRecord]) -> str:
+        if not records:
+            return self.t("no_daily")
+
+        by_measure: dict[str, list[ClimateHistoricalDateRecord]] = defaultdict(list)
+        for record in records:
+            key = f"{record.measure_name or record.measure_short_name} ({record.measure_unit or ''})"
+            by_measure[key].append(record)
+
+        location = self._location_name(records[0].location_name, records[0].location_id)
+        lines = [self.t("daily_title", location=location)]
+
+        for measure, grouped_records in by_measure.items():
+            sorted_records = sorted(grouped_records, key=lambda x: x.date)
+            values = [record.value for record in sorted_records]
+            average = sum(values) / len(values)
+            min_record = min(sorted_records, key=lambda x: x.value)
+            max_record = max(sorted_records, key=lambda x: x.value)
+            lines.append(f"\n  {measure.strip()}:")
+            lines.append(
+                f"    {self.t('period')}: {sorted_records[0].date} -> {sorted_records[-1].date} "
+                f"({len(sorted_records)} {self.t('days')})"
+            )
+            lines.append(f"    {self.t('average')}: {average:.2f}")
+            lines.append(f"    {self.t('minimum')}: {min_record.value:.2f} {self.t('on')} {min_record.date}")
+            lines.append(f"    {self.t('maximum')}: {max_record.value:.2f} {self.t('on')} {max_record.date}")
+
+        return "\n".join(lines)
+
+    def monthly_climate_summary(self, records: list[ClimateHistoricalDateRecord]) -> str:
+        if not records:
+            return self.t("no_monthly")
+
+        by_measure: dict[str, list[ClimateHistoricalDateRecord]] = defaultdict(list)
+        for record in records:
+            key = f"{record.measure_name or record.measure_short_name} ({record.measure_unit or ''})"
+            by_measure[key].append(record)
+
+        location = self._location_name(records[0].location_name, records[0].location_id)
+        lines = [self.t("monthly_title", location=location)]
+
+        for measure, grouped_records in by_measure.items():
+            sorted_records = sorted(grouped_records, key=lambda x: x.date)
+            values = [record.value for record in sorted_records]
+            average = sum(values) / len(values)
+            min_record = min(sorted_records, key=lambda x: x.value)
+            max_record = max(sorted_records, key=lambda x: x.value)
+            first_month = self.months.get(sorted_records[0].date.month, str(sorted_records[0].date.month))
+            last_month = self.months.get(sorted_records[-1].date.month, str(sorted_records[-1].date.month))
+            lines.append(f"\n  {measure.strip()}:")
+            lines.append(f"    {self.t('period')}: {first_month} -> {last_month}")
+            lines.append(f"    {self.t('monthly_average')}: {average:.2f}")
+            lines.append(f"    {self.t('lowest_month')}: {min_record.value:.2f} ({self.months.get(min_record.date.month, str(min_record.date.month))})")
+            lines.append(f"    {self.t('highest_month')}: {max_record.value:.2f} ({self.months.get(max_record.date.month, str(max_record.date.month))})")
+
+        return "\n".join(lines)
+
+    def climatology_narrative(self, records: list[ClimateHistoricalMonthRecord]) -> str:
+        if not records:
+            return self.t("no_climatology")
+
+        by_measure: dict[str, list[ClimateHistoricalMonthRecord]] = defaultdict(list)
+        for record in records:
+            key = record.measure_name or record.measure_short_name or self.t("variable")
+            by_measure[key].append(record)
+
+        location = self._location_name(records[0].location_name, records[0].location_id)
+        lines = [self.t("climatology_title", location=location)]
+
+        for measure, grouped_records in by_measure.items():
+            sorted_records = sorted(grouped_records, key=lambda x: x.month)
+            unit = sorted_records[0].measure_unit or ""
+            peak = max(sorted_records, key=lambda x: x.value)
+            trough = min(sorted_records, key=lambda x: x.value)
+
+            lines.append(f"\n  {measure} [{unit}]:")
+            for record in sorted_records:
+                bar = "#" * int(record.value / (peak.value or 1) * 20)
+                month_name = self.months.get(record.month, str(record.month))
+                lines.append(f"    {month_name:>10}: {record.value:>8.1f}  {bar}")
+            lines.append(f"    -> {self.t('peak')}: {self.months.get(peak.month, str(peak.month))} ({peak.value:.1f} {unit})")
+            lines.append(
+                f"    -> {self.t('minimum')}: {self.months.get(trough.month, str(trough.month))} "
+                f"({trough.value:.1f} {unit})"
+            )
+
+        return "\n".join(lines)
+
+    def minmax_daily_summary(self, records: list[MinMaxDateRecord]) -> str:
+        if not records:
+            return self.t("no_extremes")
+        location = self._location_name(records[0].location_name, records[0].location_id)
+        lines = [self.t("daily_extremes_title", location=location)]
+        for record in records:
+            name = record.name or str(record.id)
+            lines.append(
+                f"  - {name}: min={record.min_value:.2f} ({record.min_date or '?'})"
+                f" | max={record.max_value:.2f} ({record.max_date or '?'})"
+            )
+        return "\n".join(lines)
+
+    def minmax_climatology_summary(self, records: list[MinMaxMonthRecord]) -> str:
+        if not records:
+            return self.t("no_clim_extremes")
+        location = self._location_name(records[0].location_name, records[0].location_id)
+        lines = [self.t("clim_extremes_title", location=location)]
+        for record in records:
+            name = record.name or str(record.id)
+            min_month = self.months.get(record.min_month or 0, str(record.min_month))
+            max_month = self.months.get(record.max_month or 0, str(record.max_month))
+            lines.append(
+                f"  - {name}: min={record.min_value:.2f} {self.t('in_month')} {min_month}"
+                f" | max={record.max_value:.2f} {self.t('in_month')} {max_month}"
+            )
+        return "\n".join(lines)
+
+    # Indicators
+
+    def indicator_narrative(
+        self,
+        records: list[ClimateHistoricalIndicatorRecord],
+        indicator_name: str | None = None,
+    ) -> str:
+        if not records:
+            name = indicator_name or self.t("indicator_default")
+            return self.t("no_indicator_records", name=name)
+
+        location = self._location_name(records[0].location_name, records[0].location_id)
+        indicator_name_value = records[0].indicator_name or indicator_name or self.t("indicator")
+        unit = records[0].indicator_unit or ""
+        period = records[0].period or self.t("period_label")
+
+        values = [record.value for record in records]
+        average = sum(values) / len(values)
+        max_record = max(records, key=lambda x: x.value)
+        min_record = min(records, key=lambda x: x.value)
+
+        lines = [
+            self.t("indicator_title", name=indicator_name_value, unit=unit),
+            f"{self.t('location')}: {location}",
+            f"{self.t('records')}: {len(records)} ({period})",
+            "",
+            self.t("stat_summary"),
+            f"  {self.t('average')}: {average:.2f} {unit}",
+            f"  {self.t('max_value')}: {max_record.value:.2f} {unit}"
+            + (f" ({self.t('period_label')}: {max_record.start_date})" if max_record.start_date else ""),
+            f"  {self.t('min_value')}: {min_record.value:.2f} {unit}"
+            + (f" ({self.t('period_label')}: {min_record.start_date})" if min_record.start_date else ""),
+        ]
+
+        if len(records) <= 24:
+            lines.append(f"\n{self.t('historical_series')}")
+            for record in sorted(records, key=lambda x: x.start_date or ""):
+                date_value = record.start_date[:10] if record.start_date else "?"
+                lines.append(f"  {date_value}: {record.value:.2f} {unit}")
+
+        return "\n".join(lines)
+
+    def indicator_extremes_narrative(self, records: list[MinMaxDateRecord]) -> str:
+        if not records:
+            return self.t("no_indicator_extremes")
+        location = self._location_name(records[0].location_name, records[0].location_id)
+        lines = [self.t("indicator_extremes_title", location=location)]
+        for record in records:
+            name = record.name or str(record.id)
+            lines.append(
+                f"  - {name}: min={record.min_value:.2f} ({record.min_date or '?'})"
+                f" | max={record.max_value:.2f} ({record.max_date or '?'})"
+            )
+        return "\n".join(lines)
+
+    def recommendations_narrative(self, features: list[IndicatorFeature]) -> str:
+        if not features:
+            return self.t("no_recommendations")
+
+        recommendations = [feature for feature in features if feature.type == "recommendation"]
+        indicator_features = [feature for feature in features if feature.type == "feature"]
+
+        lines = []
+        if recommendations:
+            lines.append(self.t("recommendations"))
+            for feature in recommendations:
+                lines.append(f"  - {feature.title}")
+                if feature.description:
+                    lines.append(f"    {feature.description}")
+
+        if indicator_features:
+            lines.append(f"\n{self.t('features')}")
+            for feature in indicator_features:
+                lines.append(f"  - {feature.title}")
+                if feature.description:
+                    lines.append(f"    {feature.description}")
+
+        return "\n".join(lines) if lines else self.t("no_extra_info")
+
+    def indicators_catalog_summary(self, indicators: list[IndicatorWithFeatures]) -> str:
+        if not indicators:
+            return self.t("no_indicators")
+        lines = [self.t("indicators_catalog", count=len(indicators))]
+        for indicator in indicators:
+            lines.append(f"  - [{indicator.short_name}] {indicator.name} - {indicator.unit} ({indicator.temporality}, {indicator.type})")
+        return "\n".join(lines)

@@ -9,7 +9,7 @@ from typing import Optional
 
 
 def csv(value: str | int | Iterable[str | int]) -> str:
-    """Convert scalar/list values into the comma-separated format expected by AClimate."""
+    """Convert scalar/list values into the comma-separated format expected by Waterpoint."""
     if isinstance(value, str):
         return value
     if isinstance(value, int):
@@ -39,14 +39,15 @@ def parse_name(data: list[dict], name: str, district: Optional[bool] = None) -> 
         name_lists = np.unique([wp.get("name") for wp in data if wp.get("name")])
 
     name = name.strip().lower()
-    matched_name = process.extractOne(name, name_lists, scorer=fuzz.WRatio)
+    normalized = {n.strip().lower(): n for n in set(name_lists)}
+    matched_name = process.extractOne(name, normalized.keys(), scorer=fuzz.WRatio,score_cutoff=50.1)
+    
 
     if matched_name:
         if district:
-            matched_details = [wp for wp in data if wp.get("adm2") == matched_name[0]]
+            matched_details = [wp for wp in data if wp.get("adm2") == normalized[matched_name[0]]]
         else:   
-            matched_details = [wp for wp in data if wp.get("name") == matched_name[0]]
+            matched_details = [wp for wp in data if wp.get("name") == normalized[matched_name[0]]]
         return matched_details
     
     return []
-
