@@ -4,12 +4,14 @@ from typing import Any, Awaitable, Callable
 from lswms_sdk.utils import parse_name
 from lswms_sdk.lswms_client import  WaterpointClient
 from lswms_sdk.lswms_models import Waterpoints,Monitored,Adm1,Adm2,SubseasonalForecast
+from lswms_sdk.context_builder import ContextBuilder  
+
 
 #CachedGet = Callable[..., Awaitable[Any]]
 #GetClient = Callable[..., Awaitable[Any]]
 
 #def register_tools(mcp, cached_get: CachedGet, ctx, get_client: GetClient) -> None:
-def register_tools(mcp, client: WaterpointClient) -> None:
+def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
     # ═══════════════════════════════════════════════════════════════════════════
     # ADMINISTRATIVE REGIONS AND WATERPOINTS 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -51,40 +53,44 @@ def register_tools(mcp, client: WaterpointClient) -> None:
     @mcp.tool(name="search_waterpoints_by_name",
             description="Get a waterpoint available in the database searched by name")
  
-    async def search_waterpoints_by_name(waterpoint_name: str) -> list[Waterpoints]:
+    async def search_waterpoints_by_name(waterpoint_name: str) -> str:
         wp_data = await client.get_waterpoints()
         
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
         
         matched_dicts = parse_name(dict_data, waterpoint_name)
         if not matched_dicts:
-            return [{"Not Found": f"a waterpoint named '{waterpoint_name}'"}]
-        return [Waterpoints(**d) for d in matched_dicts]
-    
+            return ctx.t("no_waterpoint", waterpoint= waterpoint_name)
+        data =[Waterpoints(**d) for d in matched_dicts]
+        return ctx.waterpoint_summary(waterpoint=data)    
     @mcp.tool(name="get_seasonal_forecast",
               description = "Retrieve the seasonal forecast for a specific waterpoint using its name, where forecast probabilities are provided as values ranging from 0 to 1 for Below-Normal, Normal, and Above-Normal conditions.")
-    async def get_seasonal_forecast(waterpoint_name:str)->list:
+    async def get_seasonal_forecast(waterpoint_name:str)->str:
         wp_data = await client.get_waterpoints()
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
         matched_dicts = parse_name(dict_data, waterpoint_name)
         
         if not matched_dicts:
-            return [{"Not Found": f"a waterpoint named '{waterpoint_name}'"}]
+            return ctx.t("no_waterpoint", waterpoint=waterpoint_name)
         sesonal_fxt = await client.get_seasonal_forecast(matched_dicts[0]['id'])
-        return [sesonal_fxt.model_dump()]
+        waterpoint_name_db = matched_dicts[0]['name']
+        data =  [sesonal_fxt.model_dump()]
+        return ctx.seasonal_summary(seasonal=data,waterpoint_name=waterpoint_name_db) 
+
     @mcp.tool(name="get_subseasonal_forecast",
               description = "Retrieve the subseasonal forecast represented from week 1 to week 4 for a specific waterpoint using its name, where forecast probabilities are provided as values ranging from 0 to 1 for Below-Normal, Normal, and Above-Normal conditions.")
-    async def get_subseasonal_forecast(waterpoint_name:str)->list:
+    async def get_subseasonal_forecast(waterpoint_name:str)->str:
         wp_data = await client.get_waterpoints()
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
         matched_dicts = parse_name(dict_data, waterpoint_name)
         
         if not matched_dicts:
-            return [{"Not Found": f"a waterpoint named '{waterpoint_name}'"}]
+            return ctx.t("no_waterpoint", waterpoint=waterpoint_name)
         
         subseasonal_fxt = await client.get_subseasonal_forecast(matched_dicts[0]['id'])
-        
-        return [subseasonal_fxt.model_dump()]
+        waterpoint_name_db = matched_dicts[0]['name']
+        data = [subseasonal_fxt.model_dump()]
+        return ctx.subseasonal_summary(subseasonal=data,waterpoint_name=waterpoint_name_db)
 
     @mcp.tool(name="get_waterpoint_profile",
               description="get a waterpoint profile from the available dataset using the waterpoint name")
@@ -97,17 +103,14 @@ def register_tools(mcp, client: WaterpointClient) -> None:
         matched_dicts = parse_name(dict_data, waterpoint_name)
         
         if not matched_dicts:
-            return [{"Not Found": f"waterpoint named '{waterpoint_name}'"}]
+            return ctx.t("no_waterpoint", waterpoint=waterpoint_name)
         #context_builder will handle the agri_contexts
         #profile_contexts = ['Water use and management','Demographic characteristics','Location'] 
-
+        waterpoint_name_db = matched_dicts[0]['name']
         profile = await client.get_waterpoint_profile(matched_dicts[0]["id"])
         
-        #TODO
-        #Return as a list of dicts and use the context builder incorporate profile_contexts     
-        #profile_contexts = ['Water use and management','Demographic characteristics','Location']
-
-        return [profile.model_dump()]
+        data = [profile.model_dump()]
+        return ctx.profile_summary(data,waterpoint_name=waterpoint_name_db)
     #observation
     @mcp.tool(name="get_daily_observation_series",
               description = "Retrieve the daily sereis of records on waterpoint depth, scaled depth, rainfall and evapotranspiration data for a specific waterpoint using the waterpoint name")

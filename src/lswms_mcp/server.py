@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from lswms_sdk.lswms_client import get_client
 from lswms_mcp.settings import Settings
 from lswms_mcp.tools import register_tools
+from lswms_sdk.context_builder import ContextBuilder
 # from lswms_mcp.prompts import register_prompts
 # from lswms_mcp.resources import register_resources
 
@@ -64,7 +65,7 @@ async def cached_get(cache_key: str, path: str, **params: Any) -> Any:
 # ── REGISTRO CENTRALIZADO ─────────────────────────────────────────────────────
 client = asyncio.run(shared_client())
 # register_resources(mcp=mcp, client=client)
-register_tools(mcp=mcp, client=client)
+register_tools(mcp=mcp, client=client,ctx=ContextBuilder())
 # register_prompts(mcp=mcp)
 
 # ── WEB PAGE ──────────────────────────────────────────────────────────────────
