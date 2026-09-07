@@ -49,7 +49,18 @@ TEXT:dict[str,dict[str,str|list[str]]] = {"en": {
         "lower":"Below Normal",
         "normal":"Normal",
         "upper":"Above Normal",
-        "GOOD": {
+        "depth": "Current Waterpoint Depth (m)",
+        "evp": "Evapotranspiration (mm)",
+        "rain": "Daily Rainfall (mm)",
+        "scaled_depth": "Normalized Waterpoint Depth",
+        "climatology_depth": "Historical Average Waterpoint Depth for This Day",
+        "climatology_rain": "Historical Average Rainfall for This Day",
+        "climatology_scaled_depth": "Historical Average Normalized Waterpoint Depth for This Day",
+        "climatology_evp" :"Historical Average Evapotranspiration (mm) for This day",
+},
+}
+ADVISORY : dict[str,dict[str,str|list[str]]]  = {"en":{
+    "GOOD": {
         "pastoralists": [
           "Proper management of water use for other purposes is recommended.",
           "Utilize available water resources responsibly while avoiding unnecessary wastage.",
@@ -94,7 +105,7 @@ TEXT:dict[str,dict[str,str|list[str]]] = {"en": {
           "Prepare contingency plans in case the waterpoint rapidly declines to emergency levels"
         ]
       },
-      "NEAR-DRY": {
+      "NEAR_DRY": {
         "pastoralists": [
           "Reserve the remaining pond water for drinking purposes and critical livestock needs",
           "Initiate emergency measures such as rationing water",
@@ -111,7 +122,7 @@ TEXT:dict[str,dict[str,str|list[str]]] = {"en": {
           "Involve local communities in pond restoration efforts through participatory planning, awareness-raising campaigns, and capacity-building workshops on water conservation and sustainable land management practices"
         ]
       },
-      "SEASONALY-DRY": {
+      "SEASONAL_DRY":{
           "pastoralists": [
           "Organize remaining community members to clean, desilt, and repair the pond in preparation for the next rainy season.",
           "Support elderly people, women, children, and vulnerable households who remain in the settlement while other family members migrate with livestock.",
@@ -126,7 +137,7 @@ TEXT:dict[str,dict[str,str|list[str]]] = {"en": {
           "Involve local communities in pond restoration efforts through participatory planning, awareness-raising campaigns, and capacity-building workshops on water conservation and sustainable land management practices"
         ]
       }
-      },
+      }
 }
 class ContextBuilder:
     """Convert waterpoint API responses into LLM-readable text.
@@ -162,6 +173,9 @@ class ContextBuilder:
 
     def t(self, key: str, **kwargs: Any) -> str:
         return TEXT[self.language][key].format(**kwargs)
+
+    def a(self, key: str, **kwargs: Any) -> dict[str,list[str]]:
+        return ADVISORY.get(self.language,{}).get(key,{})
 
     def _location_name(self, location_name: str | None, location_id: int) -> str:
         return location_name or self.t("location_fallback", id=location_id)
@@ -264,12 +278,45 @@ class ContextBuilder:
                             lines.append(f"{key}: {val[key]}")
  
                 return"\n".join(lines)
-    #Waterpoint dvisory
-    #TODO link advisory summary with contexts in t for each STATUS
+    #Waterpoint dvisory 'arguments advisory status and links with the advisories by user groups (Extension agents & Pastoralists)
+    def advisory_summary(self, advisory: list[dict] | str, waterpoint_name: str) -> str:
+        if not advisory:
+            return self.t("no_waterpoint", waterpoint=waterpoint_name)
 
+        advisory_status = str(advisory[0].wp_status)# it may need some handle 
 
-    
-    #TODO summary to current monitoring
-     
+        advisory_response = self.a(advisory_status)
+        
+        lines = [f"{waterpoint_name} Status: {advisory_status}\nAdvisory"]
 
-    # TODO time series records, climatology
+        if isinstance(advisory_response, dict):
+            for target_group, advisory_messg in advisory_response.items():
+                lines.append(f"\n{target_group.title()}:")
+                if isinstance(advisory_messg, list):
+                    for item in advisory_messg:
+                        lines.append(f"- {item}")
+        elif isinstance(advisory_response, str):
+            lines.append(advisory_response)
+
+        return "\n".join(lines)
+    #monitoring summary uses the last monitored data and provide the full element descripton linked with TEXT or t function
+    # TODO date limit for the updated monitored data if it is bellow certain threshold of the date returns data is not updated (a week) 
+    def monitoring_summary(self, monitoring:list[Monitored],waterpoint_name:str)->str:
+        if not monitoring:
+            return(self.t("no_waterpoint", waterpoint=waterpoint_name))
+        update_key = []
+        update_val = []
+        lines = []
+        for loc in monitoring:
+                    lines = [] # - [{loc.id}] why the LLM need the id
+                    if loc.date:
+                        lines.append(f"{waterpoint_name} Monitoring, {loc.date}\n")
+                    if loc.values:
+                        value_list = loc.values
+                        if isinstance(value_list,list):
+                            for val in value_list:
+                                if isinstance(val,dict):
+                                    lines.append(f"{self.t(val['type'])} : {val['value']}")
+        return "\n".join(lines)
+
+    # # TODO time series records, climatology
