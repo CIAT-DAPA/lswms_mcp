@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
-from lswms_sdk.utils import parse_name
+from lswms_sdk.utils import parse_name,date_str
 from lswms_sdk.lswms_client import  WaterpointClient
 from lswms_sdk.lswms_models import Waterpoints,Monitored,Adm1,Adm2,SubseasonalForecast
 from lswms_sdk.context_builder import ContextBuilder  
@@ -16,44 +16,49 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
     # ADMINISTRATIVE REGIONS AND WATERPOINTS 
     # ═══════════════════════════════════════════════════════════════════════════
 
-    @mcp.tool(name="find_administrative_zone_by_name",
-            description="Search for administrative zones level 1 (zones) by name.")
-    async def find_administrative_zone_by_name(zone_name: str) -> dict:
+    @mcp.tool(name="get_zone_with_waterpoints",
+            description="returns adminstrative zone where waterpoints are presernt. Search by zone name.")
+    async def get_zone_with_waterpoints(zone_name: str) -> dict:
         adm1_data = await client.get_Adm1()
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in adm1_data]
         matched_dicts = parse_name(dict_data,zone_name)
         if not matched_dicts:
-            return []
-        return matched_dicts
+            return ctx.t("no_zone", zone_name=zone_name)
+        # return matched_dicts
+        return ctx.zone_summary(matched_dicts[0],zone_name=matched_dicts[0]['name'])
 
 
-    @mcp.tool(name="find_administrative_districts_by_zone",
-            description="Search for administrative district level 2 (district or woreda) by zone name.")
-    async def find_administrative_districts_by_zone(zone_name: str) -> list[dict]:
-        adm1_data = await find_administrative_zone_by_name(zone_name)
+    @mcp.tool(name="get_districts_with_waterpoints", 
+            description="Returns a list of districts within a specified zone where waterpoints are present. This tool helps identify the administrative districts that contain one or more recorded waterpoints in the selected zone")
+    async def get_districts_with_waterpoints(zone_name: str) -> str: #
+        adm1_data = await client.get_Adm1()
+        dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in adm1_data]
+        matched_dicts = parse_name(dict_data,zone_name)
             
-        if not adm1_data:
-            return [{"Not Found": f"a zone named '{zone_name}'"}]
-        zone_id =  adm1_data[0]['id']
+        if not matched_dicts:
+            return ctx.t("no_zone", zone_name=zone_name)
+        zone_id =  matched_dicts[0]['id']
         districts = await client.get_adm2_by_adm1_ids(zone_id)
-        districts_dict = [d.model_dump() if hasattr(d, "model_dump") else d for d in districts]
-        return districts_dict
+        districts_dict = [d.model_dump() if hasattr(d, "model_dump") else dict(d) for d in districts]
+        # return districts_dict
+        return ctx.districts_summary(districts_dict,zone_name=matched_dicts[0]['name'])  
   
-    @mcp.tool(name="search_waterpoints_by_district",
-            description="Get details of a waterpoints available in the database searched by district name use this to search for status of waterpoints in a zone")
-    async def search_waterpoints_by_district(district_name: str) -> list[Waterpoints]:
+    @mcp.tool(name="get_waterpoints_by_district",
+            description="Get details of a waterpoints available in the database searched by district name use this to search for status of waterpoints in a district")
+    async def get_waterpoints_by_district(district_name: str) -> str: #list[Waterpoints]
         wp_data = await client.get_waterpoints() #model list data
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
         matched_dicts = parse_name(dict_data,district_name,district=True)
         if not matched_dicts:
             return [{"Not Found": f"a district named '{district_name}'"}]
         # Return structured Pydantic objects 
-        return [Waterpoints(**d) for d in matched_dicts]
+        data = [Waterpoints(**d) for d in matched_dicts]
+        return ctx.waterpoints_in_district_summary(data,district_name=matched_dicts[0]['adm2'])
     
-    @mcp.tool(name="search_waterpoints_by_name",
+    @mcp.tool(name="get_waterpoints_by_name",
             description="Get a waterpoint available in the database searched by name")
  
-    async def search_waterpoints_by_name(waterpoint_name: str) -> str:
+    async def get_waterpoints_by_name(waterpoint_name: str) -> str:
         wp_data = await client.get_waterpoints()
         
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
@@ -111,23 +116,39 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
         
         data = [profile.model_dump()]
         return ctx.profile_summary(data,waterpoint_name=waterpoint_name_db)
+    
     #observation
     @mcp.tool(name="get_daily_observation_series",
-              description = "Retrieve the daily sereis of records on waterpoint depth, scaled depth, rainfall and evapotranspiration data for a specific waterpoint using the waterpoint name")
-    async def get_daily_observation_series(waterpoint_name:str)->dict:
+              description = "Retrieve daily waterpoint monitoring records for a specified waterpoint, including water depth, scaled depth, rainfall, and evapotranspiration measurements. The query requires the waterpoint name, start year, and end year as inputs and returns all daily observations within the selected date range. To maintain performance and avoid excessive data retrieval, limit requests to a maximum of three years of data whenever possible")
+    async def get_daily_observation_series(waterpoint_name:str, start_year:int,end_year:int)->dict:
+        start_date = f"{start_year}-01-01"
+        end_date = f"{end_year}-12-31"
+        if end_year - start_year > 3:
+            return ctx.t("date_range_exceeded", start_year=start_year, end_year=end_year)
+        start_date = date_str(start_date)
+        end_date = date_str(end_date)
         wp_data = await client.get_waterpoints()
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
         matched_dicts = parse_name(dict_data, waterpoint_name)
         
         if not matched_dicts:
-            return [{"Not Found": f"waterpoint named '{waterpoint_name}'"}]
+            return ctx.t("no_waterpoint", waterpoint=waterpoint_name)        
+        daily_data = await client.get_daily_observations(matched_dicts[0]['id'])
+        return ctx.daily_row(daily_data,start_date=start_date,end_date=end_date,waterpoint_name=matched_dicts[0]['name'])       
+
+    @mcp.tool(name="get_waterpoint_climatology",
+              description = "Retrieve the climatology of waterpoint depth, scaled depth, rainfall and evapotranspiration data for a specific waterpoint using the waterpoint name")
+    async def get_waterpoint_climatology(waterpoint_name:str)->dict:
+        wp_data = await client.get_waterpoints()
+        dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
+        matched_dicts = parse_name(dict_data, waterpoint_name)
         
-        dialy_data = await client.get_daily_observations(matched_dicts[0]['id'])
-        #TODO
+        if not matched_dicts:
+            return ctx.t("no_waterpoint", waterpoint=waterpoint_name)        
+        daily_data = await client.get_daily_observations(matched_dicts[0]['id'])
         #return with details and summary the context_builder will handle this
-    
-       
-        return dialy_data
+        return ctx.climatology_summary(daily_data,waterpoint_name=matched_dicts[0]['name'])       
+        # return daily_data_dict
 
     @mcp.tool(name="get_current_observations",
               description = "Retrieve the latest monitoring of the waterpoint depth, scaled depth, rainfall and evapotranspiration data for a specific waterpoint using the waterpoint name")
@@ -136,9 +157,9 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
         matched_dicts = parse_name(dict_data, waterpoint_name)
         
-        # if not matched_dicts:
+        if not matched_dicts:
         #     # return [{"Not Found": f"waterpoint named '{waterpoint_name}'"}]
-        #     return ctx.t("no_waterpoint", waterpoint_name)
+            return ctx.t("no_waterpoint", waterpoint_name)
         
         latest_data = await client.get_current_observations(matched_dicts[0]['id'])
         waterpoint_name_data = matched_dicts[0]['name']

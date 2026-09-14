@@ -7,6 +7,8 @@ The builder supports multiple output languages through lighweight templates.
 from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Literal
+from lswms_sdk.utils import date_str
+from datetime import datetime
 
 from lswms_sdk.lswms_models import (
     Adm2,Adm3,Advisory,Monitored,Waterpoints,SubseasonalForecast,SeasonalForecast
@@ -39,8 +41,11 @@ TEXT:dict[str,dict[str,str|list[str]]] = {"en": {
         "lon" : "Longitude",     
         "coordinates": "Coordinates",
         "no_zone" : "Not Found  a zone named {zone_name} in the platform",
+        "districts_title" : "Spatial Distribution of Waterpoints across districts in {zone_name} Zone",
+        "zone_title" : "Zone: {zone_name} has waterpoints.",
         "no_waterpoint" : "Not Found  a waterpoint named {waterpoint} in the platform",   
         "no_current_data": "No recent monitoring data was found.",
+        "no_measure_data": "No measurement data available for the selected period.",
         "subseasonal_title": "Subseasonal forecast for waterpoint {waterpoint}",
         "seasonal_title": "Sasonal forecast for waterpoint {waterpoint}",
         "profile_title" :"{waterpoint} Waterpoint profile",
@@ -57,6 +62,17 @@ TEXT:dict[str,dict[str,str|list[str]]] = {"en": {
         "climatology_rain": "Historical Average Rainfall for This Day",
         "climatology_scaled_depth": "Historical Average Normalized Waterpoint Depth for This Day",
         "climatology_evp" :"Historical Average Evapotranspiration (mm) for This day",
+        "daily_title": "Daily Observations for waterpoint {waterpoint}",
+        "climatology_title": "Climatology Summary for waterpoint {waterpoint}",
+        "minimum": "Minimum",
+        "maximum": "Maximum",
+        "average": "Average",
+        "period": "Period",
+        "days": "Days",
+        "on": "on",
+        "to": "to",
+        "wp_in_district_title": "Waterpoints in {district_name} district:",
+        "date_range_exceeded": "The requested date range exceeds the maximum allowed period of 3 years. Please narrow your request to 3 years.",
 },
 }
 ADVISORY : dict[str,dict[str,str|list[str]]]  = {"en":{
@@ -249,7 +265,7 @@ class ContextBuilder:
             if loc.adm3:
                 parts.append(f"    {self.t('adm3')}: {loc.adm3}")
             if loc.lat is not None and loc.lon is not None:
-                parts.append(f"    {self.t('coordinates')}: {loc.lat:.f}, {loc.lon:.4f}")
+                parts.append(f"    {self.t('coordinates')}: {loc.lat:.2f}, {loc.lon:.2f}")
             if loc.area:
                 parts.append(f"    {self.t('area')}: {loc.area}")
 
@@ -303,9 +319,7 @@ class ContextBuilder:
     # TODO date limit for the updated monitored data if it is bellow certain threshold of the date returns data is not updated (a week) 
     def monitoring_summary(self, monitoring:list[Monitored],waterpoint_name:str)->str:
         if not monitoring:
-            return(self.t("no_waterpoint", waterpoint=waterpoint_name))
-        update_key = []
-        update_val = []
+            return(self.t("no_waterpoint", waterpoint=waterpoint_name))       
         lines = []
         for loc in monitoring:
                     lines = [] # - [{loc.id}] why the LLM need the id
@@ -319,4 +333,106 @@ class ContextBuilder:
                                     lines.append(f"{self.t(val['type'])} : {val['value']}")
         return "\n".join(lines)
 
+    def daily_row(self, daily_data: list[Monitored], start_date: str, end_date: str, waterpoint_name: str) -> dict:
+        if not daily_data:
+            return self.t("no_waterpoint", waterpoint=waterpoint_name)
+        daily_return = {}   
+        lines = [self.t("daily_title", waterpoint=waterpoint_name)]
+        lines.append(f"Date Range: {start_date} to {end_date}\n")
+        my_list = []
+        for record in daily_data:
+            rec_date = record.date
+            if not (start_date <= rec_date <= end_date):
+                continue
+            lines.append(f"{rec_date}:")  
+            for val in record.values:
+                if (
+                    isinstance(val, dict)
+                    and isinstance(val.get("type"), str)
+                    and isinstance(val.get("value"), (int, float, str))
+                ):
+                    daily_return["date"] = rec_date
+                    daily_return[val["type"]] = val["value"]
+                    my_list.append(daily_return)  
+           
+        return {"daily_summary": "\n".join(lines), "daily_data": my_list}
+
     # # TODO time series records, climatology
+    def climatology_summary(self, daily:list[Monitored],waterpoint_name:str)->str:
+        if not daily:
+            return(self.t("no_waterpoint", waterpoint=waterpoint_name))
+        
+        lines = [self.t("climatology_title", waterpoint=waterpoint_name)]
+        by_measure: defaultdict[str, list[Monitored]] = defaultdict(list)
+
+        for loc in daily:
+            if not (loc.date and getattr(loc, "values", None)):
+                continue
+            for val in loc.values:
+                if isinstance(val, dict) and "type" in val and "value" in val:
+                    by_measure[val["type"]].append({"date": loc.date, "waterpoint": waterpoint_name,"value": val["value"],})                      
+        for measure, records in by_measure.items():
+            if not records:
+                continue
+            sorted_records = sorted(records, key=lambda r: r["date"])
+            values = [rec["value"] for rec in sorted_records if isinstance(rec["value"], (int, float))]
+            if not values:
+                return self.t("no_measure_data")
+            avg = sum(values) / len(values)
+            min_rec = min(sorted_records, key=lambda r: r["value"])
+            max_rec = max(sorted_records, key=lambda r: r["value"])
+
+            lines.append(f"\n  {measure.strip()}:")
+            lines.append(
+                f"    {self.t('period')}: {date_str(sorted_records[0]['date'])} {self.t('to')} "
+                f"{date_str(sorted_records[-1]['date'])} ({len(sorted_records)} {self.t('days')})" )
+            lines.append(f"    {self.t('average')}: {avg:.2f}")
+            lines.append(f"    {self.t('minimum')}: {min_rec['value']:.2f} {self.t('on')} {(min_rec['date'])}")
+            lines.append(f"    {self.t('maximum')}: {max_rec['value']:.2f} {self.t('on')} {(max_rec['date'])}")
+
+        return "\n".join(lines)
+    def districts_summary(self, districts_dict: list[dict], zone_name: str) -> str:
+        if not districts_dict:
+            return self.t("no_zone", zone_name=zone_name)
+        lines = [self.t("districts_title", zone_name=zone_name)]
+        if isinstance(districts_dict, list):
+            for item in districts_dict:
+                if isinstance(item, dict) and "name" in item:
+                    for i,j in item.items():
+                        if i == "name":
+                            lines.append(f"- {j.capitalize()}")
+        return "\n".join(lines)
+    def zone_summary(self, zone_dict: dict, zone_name: str) -> str:
+        if not zone_dict:
+            return self.t("no_zone", zone_name=zone_name)
+        parts = [f" "] 
+        if isinstance(zone_dict, dict):
+            for i, j in zone_dict.items():
+                if i == "name":
+                    parts.append(f"Yes, Waterpoints are present in {j.capitalize()} zone")
+        return "\n".join(parts)
+    def waterpoints_in_district_summary(self, waterpoints_dict: list[Waterpoints], district_name: str) -> str:
+        if not waterpoints_dict:
+            return self.t("no_district", district_name=district_name)
+        lines = [self.t("wp_in_district_title", district_name=district_name).title()]
+        count = len(waterpoints_dict)
+        lines.append(f"Total Waterpoints found: {count}\n")
+        i=1
+        for loc in waterpoints_dict:
+            parts = [f" "] # - [{loc.id}] why the LLM need the id
+            if loc.name:
+                parts.append(f"{i}-  {self.t('name')}:{loc.name}")
+            if loc.adm1:
+                parts.append(f"    {self.t('adm1')}: {loc.adm1}")
+            if loc.adm2:
+                parts.append(f"    {self.t('adm2')}: {loc.adm2}")
+            if loc.adm3:
+                parts.append(f"    {self.t('adm3')}: {loc.adm3}")
+            if loc.lat is not None and loc.lon is not None:
+                parts.append(f"    {self.t('coordinates')}: {loc.lat:.2f}, {loc.lon:.2f}")
+            if loc.area:
+                parts.append(f"    {self.t('area')}: {loc.area}")
+
+            lines.extend(parts)
+            i += 1
+        return "\n".join(lines)
