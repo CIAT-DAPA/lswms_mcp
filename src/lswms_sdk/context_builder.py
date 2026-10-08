@@ -1,0 +1,438 @@
+"""
+Waterpoint SDK contextBuilder.
+transform API resoposes into LLM-readable narrative context.
+The builder supports multiple output languages through lighweight templates.
+
+"""
+from __future__ import annotations
+from collections import defaultdict
+from typing import Any, Literal
+from lswms_sdk.utils import date_str
+from datetime import datetime
+
+from lswms_sdk.lswms_models import (
+    Adm2,Adm3,Advisory,Monitored,Waterpoints,SubseasonalForecast,SeasonalForecast
+)
+
+SupportedLanguage = Literal["en"]
+MONTH_NAMES : dict[str, dict[int, str]] = {
+    "en": {
+                1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December",
+        }
+}
+SEASONS : dict[str, dict[int, str]] = {
+    "en": {
+                1: "December-to-Feburary", 2: "January-to-March", 3: "Feburary-to-April", 4: "March-to-May",
+        5: "April-to-June", 6: "May-to-July", 7: "June-to-August", 8: "July-to-September",
+        9: "August-to-October", 10: "September-to-November", 11: "October-to-December", 12: "November-to-January",
+        }
+}
+PROFILE_CONTEXTS:dict[str,list[str]|str] = {'general': ['Water use and management','Demographic characteristics','Location'],'livstock_populn':'agriculture context livestock'}
+TEXT:dict[str,dict[str,str|list[str]]] = {"en": {
+        "waterpoint_title":"Waterpoint Description",
+        "name":"Waterpoint Name",
+        "adm1":"Zone",
+        "adm2": "District",
+        "adm3":"Kebel",
+        "area": "Area in hectars",
+        "lat" : "Latitude",
+        "lon" : "Longitude",     
+        "coordinates": "Coordinates",
+        "no_zone" : "Not Found  a zone named {zone_name} in the platform",
+        "districts_title" : "Spatial Distribution of Waterpoints across districts in {zone_name} Zone",
+        "zone_title" : "Zone: {zone_name} has waterpoints.",
+        "no_waterpoint" : "Not Found  a waterpoint named {waterpoint} in the platform",   
+        "no_current_data": "No recent monitoring data was found.",
+        "no_measure_data": "No measurement data available for the selected period.",
+        "subseasonal_title": "Subseasonal forecast for waterpoint {waterpoint}",
+        "seasonal_title": "Sasonal forecast for waterpoint {waterpoint}",
+        "profile_title" :"{waterpoint} Waterpoint profile",
+        "agriculture context livestock":"Livestock Population by Species",
+        "measure":"Rainfall Outlook",
+        "lower":"Below Normal",
+        "normal":"Normal",
+        "upper":"Above Normal",
+        "depth": "Current Waterpoint Depth (m)",
+        "evp": "Evapotranspiration (mm)",
+        "rain": "Daily Rainfall (mm)",
+        "scaled_depth": "Normalized Waterpoint Depth",
+        "climatology_depth": "Historical Average Waterpoint Depth for This Day",
+        "climatology_rain": "Historical Average Rainfall for This Day",
+        "climatology_scaled_depth": "Historical Average Normalized Waterpoint Depth for This Day",
+        "climatology_evp" :"Historical Average Evapotranspiration (mm) for This day",
+        "daily_title": "Daily Observations for waterpoint {waterpoint}",
+        "climatology_title": "Climatology Summary for waterpoint {waterpoint}",
+        "minimum": "Minimum",
+        "maximum": "Maximum",
+        "average": "Average",
+        "period": "Period",
+        "days": "Days",
+        "on": "on",
+        "to": "to",
+        "wp_in_district_title": "Waterpoints in {district_name} district:",
+        "date_range_exceeded": "The requested date range exceeds the maximum allowed period of 3 years. Please narrow your request to 3 years.",
+},
+}
+ADVISORY : dict[str,dict[str,str|list[str]]]  = {"en":{
+    "GOOD": {
+        "pastoralists": [
+          "Proper management of water use for other purposes is recommended.",
+          "Utilize available water resources responsibly while avoiding unnecessary wastage.",
+          "Avoid overconcentration of livestock in a single area to reduce pressure on surrounding rangelands",
+          "Continue regular watering schedules to maintain livestock productivity and health.",
+          "Protect waterpoint from contamination by restricting livestock access to designated watering places.",
+          "Conserve water where feasible to build resilience for future dry periods"
+        ],
+        "extension_agents": [
+          "Encourage balanced livestock distribution across available grazing and watering areas to prevent localized degradation.",
+          "Educate pastoralists on the importance of clean water sources and proper sanitation to prevent waterborne diseases among livestock",
+          "Use this favorable period to strengthen drought preparedness and community water management practices",
+          "Recommended use of efficient irrigation techniques to minimize water wastage and ensure sustainable water management",
+          "Participate in the community routine cleaning, maintenance, and protection of water infrastructure."
+        ]        
+      },
+      "WATCH" :{
+        "pastoralists": [
+          "It is advisable to reduce pond water use for other purposes",
+          "Follow community watering schedules to ensure equitable access.",
+          "Reduce prolonged livestock stays at the water point.",
+          "Participate in protecting the waterpoint from contamination and infrastructure damage"
+        ],
+        "extension_agents": [
+          "Alert communities the waterpoint is declining and promote early water conservation measures.",
+          "Support community water committees in implementing water-use regulations.",
+          "Increase monitoring of water levels, water quality, and livestock pressure around the waterpoint"
+        ]
+      },
+          
+      "ALERT":{
+        "pastoralists": [
+          "Follow the community water-use schedule strictly to prevent rapid depletion of the remaining water.",
+          "Prioritize watering weak, lactating, pregnant, and young animals before healthy adult livestock.",
+          "Consider moving part of the herd to alternative grazing and watering areas where available.",
+          "Regularly monitor livestock health and notify local leaders or extension agents if water shortages begin affecting animal condition"
+        ],
+        "extension_agents": [
+          "Advise pastoralists to prioritize vulnerable livestock groups and implement livestock segregation where necessary.",
+          "Utilize the EIAR Rangeland Monitoring portal to identify and map out alternative water sources and grazing areas.",
+          "Support pastoralists and agro-pastoralists in exploring alternative water sources such as groundwater wells, water trucking, community water supply schemes or accessing emergency livestock watering points to meet immediate water needs.",
+          "Prepare contingency plans in case the waterpoint rapidly declines to emergency levels"
+        ]
+      },
+      "NEAR_DRY": {
+        "pastoralists": [
+          "Reserve the remaining pond water for drinking purposes and critical livestock needs",
+          "Initiate emergency measures such as rationing water",
+          "Strictly follow community water rationing schedules to extend the availability of the remaining water supply.",
+          "Migrate to areas with better water and grazing availability with community leaders and authorities guidance.",
+          "Maintain good hygiene practices around the waterpoint to reduce the risk of waterborne diseases."
+        ],
+        "extension_agents": [
+          "Coordinate with the District and Regional DRM Office to communicate the severity of the water shortage and support emergency response planning.",
+          "Facilitate and monitor livestock and pastoralist migration to identified areas with available water and pasture while minimizing resource-use conflicts.",
+          "Support community water committees in implementing and enforcing water rationing measures",
+          "Conduct intensive hygiene and sanitation awareness campaigns with Health Extension Workers to prevent waterborne diseases.",
+          "Coordinate with local authorities or humanitarian organizations to facilitate access to emergency water sources",
+          "Involve local communities in pond restoration efforts through participatory planning, awareness-raising campaigns, and capacity-building workshops on water conservation and sustainable land management practices"
+        ]
+      },
+      "SEASONAL_DRY":{
+          "pastoralists": [
+          "Organize remaining community members to clean, desilt, and repair the pond in preparation for the next rainy season.",
+          "Support elderly people, women, children, and vulnerable households who remain in the settlement while other family members migrate with livestock.",
+          "protect the communal water sources from contamination and overuse.",
+          "Explore alternative livelihood activities"
+        ],
+        "extension_agents": [
+          "Provide guidance on sanitation and hygiene practices to minimize health risks.",
+          "Mobilize the community to clean, desilt, and repair the pond in preparation for the next rainy season.",
+          "Coordinate emergency water supply interventions including water trucking.",
+          "Conduct maintenance and repair work on waterpoints during dry periods to ensure they are ready to capture and store water when rainfall returns.",
+          "Involve local communities in pond restoration efforts through participatory planning, awareness-raising campaigns, and capacity-building workshops on water conservation and sustainable land management practices"
+        ]
+      }
+      }
+}
+class ContextBuilder:
+    """Convert waterpoint API responses into LLM-readable text.
+
+    Parameters
+    ----------
+    language:
+       Supported value is ``"en"`` 
+    """
+
+    def __init__(self, language: SupportedLanguage = "en") -> None:
+        self.language = self._normalize_language(language)
+
+    @staticmethod
+    def _normalize_language(language: str) -> SupportedLanguage:
+        normalized = language.lower().split("-")[0]
+        if normalized not in TEXT:
+            supported = ", ".join(sorted(TEXT))
+            raise ValueError(f"Unsupported language '{language}'. Supported languages: {supported}")
+        return normalized  # type: ignore[return-value]
+
+    def with_language(self, language: SupportedLanguage) -> "ContextBuilder":
+        """Return a new builder with the requested language."""
+        return ContextBuilder(language=language)
+
+    def set_language(self, language: SupportedLanguage) -> None:
+        """Update the builder output language in place."""
+        self.language = self._normalize_language(language)
+
+    @property
+    def months(self) -> dict[int, str]:
+        return MONTH_NAMES[self.language]
+
+    def t(self, key: str, **kwargs: Any) -> str:
+        return TEXT[self.language][key].format(**kwargs)
+
+    def a(self, key: str, **kwargs: Any) -> dict[str,list[str]]:
+        return ADVISORY.get(self.language,{}).get(key,{})
+
+    def _location_name(self, location_name: str | None, location_id: int) -> str:
+        return location_name or self.t("location_fallback", id=location_id)
+
+    # forecast summary
+    def subseasonal_summary(self, subseasonal: list[dict] | dict, waterpoint_name:str)->str:
+        if not subseasonal:
+            return self.t("no_waterpoint", waterpoint=waterpoint_name)
+
+        lines = [self.t("subseasonal_title", waterpoint=waterpoint_name)]
+        for c in subseasonal:
+            year = c.get("year")
+            month = c.get("month")
+            if month and year:
+                lines.append(f"{MONTH_NAMES['en'][month]} {year}")
+            lines.append(f"{self.t('measure')}")
+            weeks = (c.get("weeks"))
+            for wk_val in weeks:
+                if wk_val.get("week"):
+                    lines.append(f"Week {wk_val['week']}")
+                if wk_val.get("lower") is not None:
+                    lines.append(f" {self.t('lower')} : {wk_val['lower'] * 100:.2f}%")
+
+                if wk_val.get("normal") is not None:
+                    lines.append(f" {self.t('normal')} : {wk_val['normal'] * 100:.2f}%")
+
+                if wk_val.get("upper") is not None:
+                    lines.append(f" {self.t('upper')} : {wk_val['upper'] * 100:.2f}%")
+        return (("\n").join(lines))
+            
+    def seasonal_summary(self, seasonal: list[dict] | dict, waterpoint_name: str) -> str:
+
+        if not seasonal:
+            return self.t("no_waterpoint", waterpoint=waterpoint_name)
+
+        lines = [self.t("seasonal_title", waterpoint=waterpoint_name)]
+
+        for c in seasonal:
+            month = c.get("month")
+            year = c.get("year")
+            if month and year:
+                lines.append(f"{SEASONS['en'][month]} {year}")
+
+            if c.get("measure"):
+                lines.append(f"{self.t('measure')}")
+
+            if c.get("lower") is not None:
+                lines.append(f" {self.t('lower')} : {c['lower'] * 100:.2f}%")
+
+            if c.get("normal") is not None:
+                lines.append(f" {self.t('normal')} : {c['normal'] * 100:.2f}%")
+
+            if c.get("upper") is not None:
+                lines.append(f" {self.t('upper')} : {c['upper'] * 100:.2f}%")
+
+        return "\n".join(lines)
+        # waterpoint metadata and profile
+    def waterpoint_summary(self, waterpoint: list[Waterpoints]) -> str:
+        if not waterpoint:
+            return self.t("no_waterpoint")
+        lines = [self.t("waterpoint_title")]
+        # lines = [self.t("locations_found", count=len(waterpoint))]
+        for loc in waterpoint:
+            parts = [f" "] # - [{loc.id}] why the LLM need the id
+            if loc.name:
+                parts.append(f"  {self.t('name')}:{loc.name}")
+            if loc.adm1:
+                parts.append(f"    {self.t('adm1')}: {loc.adm1}")
+            if loc.adm2:
+                parts.append(f"    {self.t('adm2')}: {loc.adm2}")
+            if loc.adm3:
+                parts.append(f"    {self.t('adm3')}: {loc.adm3}")
+            if loc.lat is not None and loc.lon is not None:
+                parts.append(f"    {self.t('coordinates')}: {loc.lat:.2f}, {loc.lon:.2f}")
+            if loc.area:
+                parts.append(f"    {self.t('area')}: {loc.area}")
+
+            lines.extend(parts)
+        return "\n".join(lines)
+    #TODO summary to waterpoints in a district customize the aclimate locations   
+
+    def profile_summary(self, profile: list[dict]|dict,waterpoint_name:str) -> str:
+        if not profile:
+            return self.t("no_waterpoint")
+        lines = [self.t("profile_title",waterpoint=waterpoint_name.capitalize())]
+        for c in profile:
+            if c.get('contents_wp'):
+                wp_contents = c.get('contents_wp')
+                for contents in wp_contents:
+                    if contents.get("title") in PROFILE_CONTEXTS['general']:
+                        lines.append(contents.get("title"))
+                        vals = contents.get("values")
+                        for val in vals:
+                            lines.append(val.get("content"))
+                    elif contents.get("title") in PROFILE_CONTEXTS['livstock_populn']:
+                        lines.append(self.t(contents.get("title")))
+                        vals = contents.get("values")
+                        for val in vals:
+                            key = next(iter(val))
+                            lines.append(f"{key}: {val[key]}")
+ 
+                return"\n".join(lines)
+    #Waterpoint dvisory 'arguments advisory status and links with the advisories by user groups (Extension agents & Pastoralists)
+    def advisory_summary(self, advisory: list[dict] | str, waterpoint_name: str) -> str:
+        if not advisory:
+            return self.t("no_waterpoint", waterpoint=waterpoint_name)
+
+        advisory_status = str(advisory[0].wp_status)# it may need some handle 
+
+        advisory_response = self.a(advisory_status)
+        
+        lines = [f"{waterpoint_name} Status: {advisory_status}\nAdvisory"]
+
+        if isinstance(advisory_response, dict):
+            for target_group, advisory_messg in advisory_response.items():
+                lines.append(f"\n{target_group.title()}:")
+                if isinstance(advisory_messg, list):
+                    for item in advisory_messg:
+                        lines.append(f"- {item}")
+        elif isinstance(advisory_response, str):
+            lines.append(advisory_response)
+
+        return "\n".join(lines)
+    #monitoring summary uses the last monitored data and provide the full element descripton linked with TEXT or t function
+    # TODO date limit for the updated monitored data if it is bellow certain threshold of the date returns data is not updated (a week) 
+    def monitoring_summary(self, monitoring:list[Monitored],waterpoint_name:str)->str:
+        if not monitoring:
+            return(self.t("no_waterpoint", waterpoint=waterpoint_name))       
+        lines = []
+        for loc in monitoring:
+                    lines = [] # - [{loc.id}] why the LLM need the id
+                    if loc.date:
+                        lines.append(f"{waterpoint_name} Monitoring, {loc.date}\n")
+                    if loc.values:
+                        value_list = loc.values
+                        if isinstance(value_list,list):
+                            for val in value_list:
+                                if isinstance(val,dict):
+                                    lines.append(f"{self.t(val['type'])} : {val['value']}")
+        return "\n".join(lines)
+
+    def daily_row(self, daily_data: list[Monitored], start_date: str, end_date: str, waterpoint_name: str) -> dict:
+        if not daily_data:
+            return self.t("no_waterpoint", waterpoint=waterpoint_name)
+        daily_return = {}   
+        lines = [self.t("daily_title", waterpoint=waterpoint_name)]
+        lines.append(f"Date Range: {start_date} to {end_date}\n")
+        my_list = []
+        for record in daily_data:
+            rec_date = record.date
+            if not (start_date <= rec_date <= end_date):
+                continue
+            lines.append(f"{rec_date}:")  
+            for val in record.values:
+                if (
+                    isinstance(val, dict)
+                    and isinstance(val.get("type"), str)
+                    and isinstance(val.get("value"), (int, float, str))
+                ):
+                    daily_return["date"] = rec_date
+                    daily_return[val["type"]] = val["value"]
+                    my_list.append(daily_return)  
+           
+        return {"daily_summary": "\n".join(lines), "daily_data": my_list}
+
+    # # TODO time series records, climatology
+    def climatology_summary(self, daily:list[Monitored],waterpoint_name:str)->str:
+        if not daily:
+            return(self.t("no_waterpoint", waterpoint=waterpoint_name))
+        
+        lines = [self.t("climatology_title", waterpoint=waterpoint_name)]
+        by_measure: defaultdict[str, list[Monitored]] = defaultdict(list)
+
+        for loc in daily:
+            if not (loc.date and getattr(loc, "values", None)):
+                continue
+            for val in loc.values:
+                if isinstance(val, dict) and "type" in val and "value" in val:
+                    by_measure[val["type"]].append({"date": loc.date, "waterpoint": waterpoint_name,"value": val["value"],})                      
+        for measure, records in by_measure.items():
+            if not records:
+                continue
+            sorted_records = sorted(records, key=lambda r: r["date"])
+            values = [rec["value"] for rec in sorted_records if isinstance(rec["value"], (int, float))]
+            if not values:
+                return self.t("no_measure_data")
+            avg = sum(values) / len(values)
+            min_rec = min(sorted_records, key=lambda r: r["value"])
+            max_rec = max(sorted_records, key=lambda r: r["value"])
+
+            lines.append(f"\n  {measure.strip()}:")
+            lines.append(
+                f"    {self.t('period')}: {date_str(sorted_records[0]['date'])} {self.t('to')} "
+                f"{date_str(sorted_records[-1]['date'])} ({len(sorted_records)} {self.t('days')})" )
+            lines.append(f"    {self.t('average')}: {avg:.2f}")
+            lines.append(f"    {self.t('minimum')}: {min_rec['value']:.2f} {self.t('on')} {(min_rec['date'])}")
+            lines.append(f"    {self.t('maximum')}: {max_rec['value']:.2f} {self.t('on')} {(max_rec['date'])}")
+
+        return "\n".join(lines)
+    def districts_summary(self, districts_dict: list[dict], zone_name: str) -> str:
+        if not districts_dict:
+            return self.t("no_zone", zone_name=zone_name)
+        lines = [self.t("districts_title", zone_name=zone_name)]
+        if isinstance(districts_dict, list):
+            for item in districts_dict:
+                if isinstance(item, dict) and "name" in item:
+                    for i,j in item.items():
+                        if i == "name":
+                            lines.append(f"- {j.capitalize()}")
+        return "\n".join(lines)
+    def zone_summary(self, zone_dict: dict, zone_name: str) -> str:
+        if not zone_dict:
+            return self.t("no_zone", zone_name=zone_name)
+        parts = [f" "] 
+        if isinstance(zone_dict, dict):
+            for i, j in zone_dict.items():
+                if i == "name":
+                    parts.append(f"Yes, Waterpoints are present in {j.capitalize()} zone")
+        return "\n".join(parts)
+    def waterpoints_in_district_summary(self, waterpoints_dict: list[Waterpoints], district_name: str) -> str:
+        if not waterpoints_dict:
+            return self.t("no_district", district_name=district_name)
+        lines = [self.t("wp_in_district_title", district_name=district_name).title()]
+        count = len(waterpoints_dict)
+        lines.append(f"Total Waterpoints found: {count}\n")
+        i=1
+        for loc in waterpoints_dict:
+            parts = [f" "] # - [{loc.id}] why the LLM need the id
+            if loc.name:
+                parts.append(f"{i}-  {self.t('name')}:{loc.name}")
+            if loc.adm1:
+                parts.append(f"    {self.t('adm1')}: {loc.adm1}")
+            if loc.adm2:
+                parts.append(f"    {self.t('adm2')}: {loc.adm2}")
+            if loc.adm3:
+                parts.append(f"    {self.t('adm3')}: {loc.adm3}")
+            if loc.lat is not None and loc.lon is not None:
+                parts.append(f"    {self.t('coordinates')}: {loc.lat:.2f}, {loc.lon:.2f}")
+            if loc.area:
+                parts.append(f"    {self.t('area')}: {loc.area}")
+
+            lines.extend(parts)
+            i += 1
+        return "\n".join(lines)

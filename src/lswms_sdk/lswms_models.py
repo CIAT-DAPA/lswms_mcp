@@ -32,6 +32,7 @@ class Advisory(BaseModel):
     advisory: Optional[str] = Field(None, description="status of the waterpoint", example="good")
     language: Optional[str] = Field(None, description="Language of the advisory text", example="en")
     waterpoints: Optional[str] = Field(None, description="waterpoint id", example="5f5e3e3e4f8b9461ac6ed74cb")
+    wp_status: Optional[str] = Field(None, description="status of the waterpoint", example = "NEAR DRY")
 
 class AdvisoryPdfItem(BaseModel):
     name: Optional[str] = Field(None, description="Human readable title")
@@ -66,6 +67,11 @@ class WaterpointSimple(BaseModel):
     lat: Optional[float] = Field(None, description="latitute of the waterpoint")
     lon: Optional[float] = Field(None, description="longitude of the waterpoint")
     watershed: Optional[str] = Field(None, description="Id watershed")
+class WaterpointContent(BaseModel):
+    title: Optional[str] = None
+    content_name: Optional[str] = None
+    model_config = {"extra": "allow"}
+
 
 class Waterpoints(BaseModel):
     id: Optional[str] = Field(None, description="Id Waterpoints")
@@ -79,8 +85,8 @@ class Waterpoints(BaseModel):
     lon: Optional[float] = Field(None, description="longityde of the Waterpoint")
     watershed: Optional[str] = Field(None, description="Id watershed")
     watershed_name: Optional[str] = Field(None, description="Name of the watershed")
-    contents_wp: Optional[List[str]] = Field(None, description="List of contents associated with the waterpoint")
-    contents_ws: Optional[List[str]] = Field(None, description="List of contents associated with the watershed")
+    contents_wp: Optional[List[WaterpointContent]]  = Field(None, description="List of contents associated with the waterpoint")
+    contents_ws: Optional[List[WaterpointContent]]  = Field(None, description="List of contents associated with the watershed")
 
 class Monitored(BaseModel):
     id: Optional[str] = Field(None, description="Id Monitored data")
