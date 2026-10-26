@@ -36,7 +36,7 @@ mcp = FastMCP(settings.server_name, log_level=settings.log_level.upper(),
               host=settings.mcp_host, port=settings.mcp_port)
 
 
-# Starts the AClimate client in the lifespan of the server to be shared across tools.
+# Starts the waterpoint client in the lifespan of the server to be shared across tools.
 async def shared_client():
     return await get_client(
         base_url=settings.api_base_url,

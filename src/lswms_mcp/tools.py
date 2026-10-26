@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
-from lswms_sdk.utils import parse_name,date_str
+from lswms_sdk.utils import parse_name,date_str,parse_waterpoint_status
 from lswms_sdk.lswms_client import  WaterpointClient
 from lswms_sdk.lswms_models import Waterpoints,Monitored,Adm1,Adm2,SubseasonalForecast
 from lswms_sdk.context_builder import ContextBuilder  
+import re
+from typing import Union, List
+import json 
 
 
 #CachedGet = Callable[..., Awaitable[Any]]
@@ -181,3 +184,60 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
         #TODO return with the context builder with STATUS and ADVISORY contexts
         # return type(advisory_data)
         return ctx.advisory_summary(advisory=advisory_data,waterpoint_name = waterpoint_name_db) 
+    @mcp.tool(name="get_waterpoint_status_in_district",
+              description="Retrieves a district-level summary of current waterpoint conditions, including the number of waterpoints in each status category and their latest observations ")
+    async def get_waterpoint_status_in_district(district_name:str,status: Union[str, List[str]])->str:
+        
+        if isinstance(status, str):
+            status = [status]
+        #clean the status call        
+        cleaned_status = []
+        
+        for s in status:
+            parsed = parse_waterpoint_status(s)
+            if isinstance(parsed, list):
+                cleaned_status.extend(parsed)
+            else:
+                cleaned_status.append(parsed)
+                    
+            # Normalize cleaned_status items to uppercase for consistent comparison
+        cleaned_status = [str(s).upper() for s in cleaned_status]
+        
+
+        wp_in_districts = await get_waterpoints_by_district(district_name)
+        if not wp_in_districts:
+            return json.dumps({"tell_user": f"Could not find a district named '{district_name}' in the database. Please check the spelling and try again."})
+        waterpoints = re.findall(r'Waterpoint Name:\s*([^\n]+)', wp_in_districts)
+        
+        waterpoints = [wp.strip() for wp in waterpoints]
+
+        
+        #tyde the waterpoint 
+        wp_status_in_district = []
+        available_status = []
+
+        for waterpoint in waterpoints:
+
+            waterpoint_status = await get_waterpoint_status(waterpoint)
+
+            if not waterpoint_status:
+                continue
+
+            waterpoint_status = str(waterpoint_status)
+
+            status_match = re.findall(r'Status:\s*([^\n]+)', waterpoint_status,flags=re.IGNORECASE )
+
+            if not status_match:
+                continue
+
+            current_status = status_match[0].strip().upper()
+
+            if current_status in cleaned_status:
+                wp_status_in_district.append({"waterpoint": waterpoint, "status": current_status })
+            else:
+                available_status.append({"waterpoint": waterpoint, "status": current_status})
+        if wp_status_in_district:             
+            return json.dumps(wp_status_in_district,indent=2)
+        else:
+            available_status.insert(0,{"tell_user": f"No waterpoints are currently available with the status '{cleaned_status}'. Please choose from the available waterpoint statuses." })
+            return json.dumps(available_status,indent=2)

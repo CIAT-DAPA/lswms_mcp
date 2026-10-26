@@ -30,6 +30,7 @@ pipeline {
                 script {
                     sshCommand remote: remote, command: """
                         cd /var/www/waterpoints_mcp/lswms_mcp
+                        git config --global --get-all safe.directory | grep -qx /var/www/waterpoints_mcp/lswms_mcp || git config --global --add safe.directory /var/www/waterpoints_mcp/lswms_mcp
                         git checkout main
                         git pull origin main
                     """
@@ -41,6 +42,7 @@ pipeline {
                 script {
                     sshCommand remote: remote, command: """
                         cd /var/www/waterpoints_mcp/lswms_mcp
+                        uv python install 3.10
                         uv sync --no-dev
                     """
                 }
@@ -52,8 +54,7 @@ pipeline {
                     sshCommand remote: remote, command: """
                         cd /var/www/waterpoints_mcp/lswms_mcp
                         fuser -k 5004/tcp || true
-                        source .venv/bin/activate
-                        nohup uv run lswms-mcp ./mcp.log 2>&1 < /dev/null &
+                        nohup uv run lswms-mcp > ./mcp.log 2>&1 < /dev/null &
                     """
                 }
             }
