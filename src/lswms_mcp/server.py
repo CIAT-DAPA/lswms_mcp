@@ -83,6 +83,7 @@ async def index(request: Request) -> HTMLResponse:
         <p><strong>Server:</strong> {settings.server_name}</p>
         <p><strong>Transport:</strong> {settings.mcp_transport}</p>
         <ul>
+          <li><a href="/">/</a></li>
           <li><a href="/health">/health</a></li>
           <li><code>/mcp</code> for streamable-http</li>
           <li><code>/sse</code> for sse</li>
