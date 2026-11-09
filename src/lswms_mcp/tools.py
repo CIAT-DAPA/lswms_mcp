@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
-from lswms_sdk.utils import parse_name,date_str,parse_waterpoint_status
+from lswms_sdk.utils import parse_name,date_str,parse_waterpoint_status,parse_zone_name
 from lswms_sdk.lswms_client import  WaterpointClient
 from lswms_sdk.lswms_models import Waterpoints,Monitored,Adm1,Adm2,SubseasonalForecast
 from lswms_sdk.context_builder import ContextBuilder  
 import re
 from typing import Union, List
 import json 
-
 
 #CachedGet = Callable[..., Awaitable[Any]]
 #GetClient = Callable[..., Awaitable[Any]]
@@ -18,19 +17,6 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
     # ═══════════════════════════════════════════════════════════════════════════
     # ADMINISTRATIVE REGIONS AND WATERPOINTS 
     # ═══════════════════════════════════════════════════════════════════════════
-
-    @mcp.tool(name="get_zone_with_waterpoints",
-            description="returns adminstrative zone where waterpoints are presernt. Search by zone name.")
-    async def get_zone_with_waterpoints(zone_name: str) -> dict:
-        adm1_data = await client.get_Adm1()
-        dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in adm1_data]
-        matched_dicts = parse_name(dict_data,zone_name)
-        if not matched_dicts:
-            return ctx.t("no_zone", zone_name=zone_name)
-        # return matched_dicts
-        return ctx.zone_summary(matched_dicts[0],zone_name=matched_dicts[0]['name'])
-
-
     @mcp.tool(name="get_districts_with_waterpoints", 
             description="Returns a list of districts within a specified zone where waterpoints are present. This tool helps identify the administrative districts that contain one or more recorded waterpoints in the selected zone")
     async def get_districts_with_waterpoints(zone_name: str) -> str: #
@@ -45,9 +31,28 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
         districts_dict = [d.model_dump() if hasattr(d, "model_dump") else dict(d) for d in districts]
         # return districts_dict
         return ctx.districts_summary(districts_dict,zone_name=matched_dicts[0]['name'])  
-  
+
+    @mcp.tool(name="get_waterpoints_by_zone",
+            description="Get details of a waterpoints available in the database searched by zone name use this to search for status of waterpoints in a zone")
+    async def get_waterpoints_by_zone(Zone_name: str) -> str: #list[Waterpoints]
+        wp_data = await client.get_waterpoints() #model list data
+        dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
+        matched_dicts = parse_zone_name(dict_data,Zone_name)
+        if not matched_dicts:
+            return [{"Not Found": f"a Zone named '{Zone_name}'"}]
+        # Return structured Pydantic objects 
+        data = [Waterpoints(**d) for d in matched_dicts]
+        return ctx.waterpoints_in_zone_summary(data,Zone_name=matched_dicts[0]['adm1'])
+
     @mcp.tool(name="get_waterpoints_by_district",
-            description="Get details of a waterpoints available in the database searched by district name use this to search for status of waterpoints in a district")
+            description="""Returns all waterpoints within a district regardinless of status.  Use this tool ONLY when a district is specified and the user wants a list or count of waterpoints.
+            Examples:
+            - List waterpoints in 'XX' District.
+            - Show all waterpoints in 'XX' District.
+            - How many waterpoints are in 'XX' District
+            Do NOT use this tool if the user mentions:dry, watch, alert, good other status condition. 
+            In those cases use get_waterpoint_status_in_district."""
+            )
     async def get_waterpoints_by_district(district_name: str) -> str: #list[Waterpoints]
         wp_data = await client.get_waterpoints() #model list data
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
@@ -72,7 +77,9 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
         data =[Waterpoints(**d) for d in matched_dicts]
         return ctx.waterpoint_summary(waterpoint=data)    
     @mcp.tool(name="get_seasonal_forecast",
-              description = "Retrieve the seasonal forecast for a specific waterpoint using its name, where forecast probabilities are provided as values ranging from 0 to 1 for Below-Normal, Normal, and Above-Normal conditions.")
+            description = '''Retrieve the seasonal rainfall forecast or climate outlook for a specific waterpoint using its name. 
+                Use this tool when the user asks about seasonal forecasts, rainfall outlooks, precipitation outlooks, 
+                climate outlooks, or expected future conditions. Returns the probabilities (0 to 1) of Below-Normal, Normal, and Above-Normal rainfall conditions for the forecast season''')
     async def get_seasonal_forecast(waterpoint_name:str)->str:
         wp_data = await client.get_waterpoints()
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
@@ -86,7 +93,9 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
         return ctx.seasonal_summary(seasonal=data,waterpoint_name=waterpoint_name_db) 
 
     @mcp.tool(name="get_subseasonal_forecast",
-              description = "Retrieve the subseasonal forecast represented from week 1 to week 4 for a specific waterpoint using its name, where forecast probabilities are provided as values ranging from 0 to 1 for Below-Normal, Normal, and Above-Normal conditions.")
+            description = '''Get the subseasonal rainfall forecast for a waterpoint. Use this tool when the user asks for:subseasonal forecast
+            subseasonal rainfall forecast, precipitation outlook, weather outlook, weekly forecast,week 1, week 2, week 3, or week 4 forecast, forecast for the next four weeks
+            Returns the probabilities of Below-Normal, Normal, and Above-Normal rainfall conditions for weeks 1 through 4 at the specified waterpoint.''')
     async def get_subseasonal_forecast(waterpoint_name:str)->str:
         wp_data = await client.get_waterpoints()
         dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
@@ -101,7 +110,10 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
         return ctx.subseasonal_summary(subseasonal=data,waterpoint_name=waterpoint_name_db)
 
     @mcp.tool(name="get_waterpoint_profile",
-              description="get a waterpoint profile from the available dataset using the waterpoint name")
+              description='''Retrieve a comprehensive waterpoint profile using the waterpoint name. 
+              Use this tool when the user asks about a waterpoint's characteristics, community context, 
+              land use, livelihoods, demographics, water use, water management, agriculture, livestock production, or watershed conditions. 
+              Returns information on Land Use and Livelihood Dynamics, Demographic Characteristics, Water Use and Management Practices, Agricultural Context, Livestock Systems, and Watershed Description for the specified waterpoint.''')
     async def get_waterpoint_profile(waterpoint_name: str) -> list:
         # Get list of all waterpoints to find the ID by name
         wp_data = await client.get_waterpoints()
@@ -122,7 +134,9 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
     
     #observation
     @mcp.tool(name="get_daily_observation_series",
-              description = "Retrieve daily waterpoint monitoring records for a specified waterpoint, including water depth, scaled depth, rainfall, and evapotranspiration measurements. The query requires the waterpoint name, start year, and end year as inputs and returns all daily observations within the selected date range. To maintain performance and avoid excessive data retrieval, limit requests to a maximum of three years of data whenever possible")
+              description = "Retrieve daily waterpoint monitoring records for a specified waterpoint, including water depth, scaled depth, rainfall, and evapotranspiration measurements. " \
+              "The query requires the waterpoint name, start year, and end year as inputs and returns all daily observations within the selected date range. " \
+              "To maintain performance and avoid excessive data retrieval, limit requests to a maximum of three years of data whenever possible")
     async def get_daily_observation_series(waterpoint_name:str, start_year:int,end_year:int)->dict:
         start_date = f"{start_year}-01-01"
         end_date = f"{end_year}-12-31"
@@ -185,7 +199,16 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
         # return type(advisory_data)
         return ctx.advisory_summary(advisory=advisory_data,waterpoint_name = waterpoint_name_db) 
     @mcp.tool(name="get_waterpoint_status_in_district",
-              description="Retrieves a district-level summary of current waterpoint conditions, including the number of waterpoints in each status category and their latest observations ")
+        description=(
+                    "Get waterpoints in a district filtered by status. Use this tool"
+                    " whenever the user asks about waterpoints with a specific status"
+                    " within a district.\nExamples:\n- Which waterpoints are dry in"
+                    " Yabello District?\n- Show dry waterpoints in Dire"
+                    " District.\n- List functional waterpoints in XX.\n- How many"
+                    " DRY waterpoints are in XX District?\nPrefer this tool over"
+                    " get_waterpoints_by_district when the query contains status terms"
+                    " such as: DRY, GOOD, ALERT, WATCH and SEASONLY DRY."
+                ))
     async def get_waterpoint_status_in_district(district_name:str,status: Union[str, List[str]])->str:
         
         if isinstance(status, str):
@@ -206,11 +229,14 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
 
         wp_in_districts = await get_waterpoints_by_district(district_name)
         if not wp_in_districts:
-            return json.dumps({"tell_user": f"Could not find a district named '{district_name}' in the database. Please check the spelling and try again."})
+            return json.dumps({"tell_user": f"Could not find a district named '{district_name}' in the database."})
         waterpoints = re.findall(r'Waterpoint Name:\s*([^\n]+)', wp_in_districts)
+        kebeles = re.findall(r'Kebel:\s*([^\n]+)', wp_in_districts)
+
         
         waterpoints = [wp.strip() for wp in waterpoints]
-
+        kebeles = [d.strip() for d in kebeles]
+        waterpoint_kebele_map = dict(zip(waterpoints, kebeles))
         
         #tyde the waterpoint 
         wp_status_in_district = []
@@ -231,13 +257,17 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
                 continue
 
             current_status = status_match[0].strip().upper()
-
+            kebele_ = waterpoint_kebele_map.get(waterpoint)
             if current_status in cleaned_status:
-                wp_status_in_district.append({"waterpoint": waterpoint, "status": current_status })
-            else:
-                available_status.append({"waterpoint": waterpoint, "status": current_status})
-        if wp_status_in_district:             
-            return json.dumps(wp_status_in_district,indent=2)
+                wp_status_in_district.append({"waterpoint": waterpoint, "kebele": kebele_, "status": current_status })
+            # else:
+            #     available_status.append({"waterpoint": waterpoint, "status": current_status})
+        if wp_status_in_district:  
+            response_data = {
+                "Title": "Waterpoint Status",
+                "waterpoints": wp_status_in_district
+            }
+            return json.dumps(response_data,indent=2)
         else:
-            available_status.insert(0,{"tell_user": f"No waterpoints are currently available with the status '{cleaned_status}'. Please choose from the available waterpoint statuses." })
+            available_status.insert(0,{"tell_user": f"No waterpoints are currently available with the status '{cleaned_status}'" })
             return json.dumps(available_status,indent=2)
