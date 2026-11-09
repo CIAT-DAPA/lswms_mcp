@@ -13,6 +13,7 @@ from datetime import datetime
 from lswms_sdk.lswms_models import (
     Adm2,Adm3,Advisory,Monitored,Waterpoints,SubseasonalForecast,SeasonalForecast
 )
+THRESHOLD = 0.15  # 15 percentage points for forecast advisory
 
 SupportedLanguage = Literal["en"]
 MONTH_NAMES : dict[str, dict[int, str]] = {
@@ -72,7 +73,19 @@ TEXT:dict[str,dict[str,str|list[str]]] = {"en": {
         "on": "on",
         "to": "to",
         "wp_in_district_title": "Waterpoints in {district_name} district:",
+        "wp_in_zone_title": "List of Waterpoints in {Zone_name} Zone:",
+        "no_district":"No district name {district_name} in the platform could you try for diffrent one",
         "date_range_exceeded": "The requested date range exceeds the maximum allowed period of 3 years. Please narrow your request to 3 years.",
+        "strong_above_normal_message":"The seasonal rainfall forecast indicates a strong likelihood of wetter-than-normal conditions, suggesting enhanced water availability, improved pasture growth, and favorable livestock water access around the waterpoint",
+        "above_normal_message":"The seasonal rainfall forecast indicates a likelihood of wetter-than-normal conditions, which may support water availability, pasture growth, and livestock water access around the waterpoint.",
+        "strong_normal_message":"The seasonal rainfall forecast indicates a strong likelihood of near-normal rainfall conditions, suggesting stable water availability, pasture production, and livestock water access.",
+        "normal_message":"The seasonal rainfall forecast indicates a likelihood of near-normal rainfall conditions, suggesting average water availability, pasture production, and livestock water access around the waterpoint.",
+        "strong_below_normal_message":"The seasonal rainfall forecast indicates a strong likelihood of drier-than-normal conditions, raising the risk of reduced water availability, poor pasture conditions, and constrained livestock water access.",
+        "below_normal_message":"The seasonal rainfall forecast for indicates a likelihood of drier-than-normal conditions, which may reduce water availability, limit pasture growth, and constrain livestock water access around the waterpoint.",
+        "weekly_normal":"Near normal condition is expected",
+        "weekly_above_normal":"Wetter-than-normal conditions are expected.",
+        "weekly_below_normal":"Drier-than-normal conditions are expected."
+
 },
 }
 ADVISORY : dict[str,dict[str,str|list[str]]]  = {"en":{
@@ -209,17 +222,29 @@ class ContextBuilder:
                 lines.append(f"{MONTH_NAMES['en'][month]} {year}")
             lines.append(f"{self.t('measure')}")
             weeks = (c.get("weeks"))
+            probs_list = []
             for wk_val in weeks:
                 if wk_val.get("week"):
                     lines.append(f"Week {wk_val['week']}")
                 if wk_val.get("lower") is not None:
                     lines.append(f" {self.t('lower')} : {wk_val['lower'] * 100:.2f}%")
-
+                    probs_list.append(wk_val['lower'])
                 if wk_val.get("normal") is not None:
                     lines.append(f" {self.t('normal')} : {wk_val['normal'] * 100:.2f}%")
-
+                    probs_list.append(wk_val['normal'])
                 if wk_val.get("upper") is not None:
                     lines.append(f" {self.t('upper')} : {wk_val['upper'] * 100:.2f}%")
+                    probs_list.append(wk_val['upper'])
+
+                if probs_list:
+                    max_idx = probs_list.index(max(probs_list))
+                    if max_idx == 0:
+                        lines.append(f" {self.t('weekly_below_normal')}")
+                    elif max_idx == 1:
+                        lines.append(f" {self.t('weekly_normal')}")
+                    else:
+                        lines.append(f" {self.t('weekly_above_normal')}")
+      
         return (("\n").join(lines))
             
     def seasonal_summary(self, seasonal: list[dict] | dict, waterpoint_name: str) -> str:
@@ -240,12 +265,34 @@ class ContextBuilder:
 
             if c.get("lower") is not None:
                 lines.append(f" {self.t('lower')} : {c['lower'] * 100:.2f}%")
+                bn = c['lower']
 
             if c.get("normal") is not None:
                 lines.append(f" {self.t('normal')} : {c['normal'] * 100:.2f}%")
+                n = c['normal']
 
             if c.get("upper") is not None:
                 lines.append(f" {self.t('upper')} : {c['upper'] * 100:.2f}%")
+                an=c['upper']
+
+
+        if an > n and an > bn:
+            if (an - max(n, bn)) >= THRESHOLD:
+                lines.append(f" {self.t('strong_above_normal_message')}")
+            else:
+                lines.append(f"{self.t('above_normal_message')}")
+
+        elif bn > n and bn > an:
+            if (bn - max(n, an)) >= THRESHOLD:
+                lines.append(f"{self.t('strong_below_normal_message')}")
+            else:
+                lines.append(f"{self.t('below_normal_message')}")
+
+        else:  # Normal is highest
+            if (n - max(an, bn)) >= THRESHOLD:
+                lines.append(f"{self.t('strong_normal_message')}")
+            else:
+                lines.append(f"{self.t('normal_message')}")
 
         return "\n".join(lines)
         # waterpoint metadata and profile
@@ -402,15 +449,41 @@ class ContextBuilder:
                         if i == "name":
                             lines.append(f"- {j.capitalize()}")
         return "\n".join(lines)
-    def zone_summary(self, zone_dict: dict, zone_name: str) -> str:
-        if not zone_dict:
-            return self.t("no_zone", zone_name=zone_name)
-        parts = [f" "] 
-        if isinstance(zone_dict, dict):
-            for i, j in zone_dict.items():
-                if i == "name":
-                    parts.append(f"Yes, Waterpoints are present in {j.capitalize()} zone")
-        return "\n".join(parts)
+    # def zone_summary(self, zone_dict: dict, zone_name: str) -> str:
+    #     if not zone_dict:
+    #         return self.t("no_zone", zone_name=zone_name)
+    #     parts = [f" "] 
+    #     if isinstance(zone_dict, dict):
+    #         for i, j in zone_dict.items():
+    #             if i == "name":
+    #                 parts.append(f"Yes, Waterpoints are present in {j.capitalize()} zone")
+    #     return "\n".join(parts)
+    def waterpoints_in_zone_summary(self, waterpoints_dict: list[Waterpoints], Zone_name: str) -> str:
+        if not waterpoints_dict:
+            return self.t("no_zone", Zone_name=Zone_name)
+        lines = [self.t("wp_in_zone_title", Zone_name=Zone_name).title()]
+        count = len(waterpoints_dict)
+        lines.append(f"Total Waterpoints found: {count}\n")
+        i=1
+        for loc in waterpoints_dict:
+            parts = [f" "] # - [{loc.id}] why the LLM need the id
+            if loc.name:
+                parts.append(f"{i}-  {self.t('name')}:{loc.name}")
+            if loc.adm1:
+                parts.append(f"    {self.t('adm1')}: {loc.adm1}")
+            if loc.adm2:
+                parts.append(f"    {self.t('adm2')}: {loc.adm2}")
+            if loc.adm3:
+                parts.append(f"    {self.t('adm3')}: {loc.adm3}")
+            if loc.lat is not None and loc.lon is not None:
+                parts.append(f"    {self.t('coordinates')}: {loc.lat:.2f}, {loc.lon:.2f}")
+            if loc.area:
+                parts.append(f"    {self.t('area')}: {loc.area}")
+
+            lines.extend(parts)
+            i += 1
+        return "\n".join(lines)
+
     def waterpoints_in_district_summary(self, waterpoints_dict: list[Waterpoints], district_name: str) -> str:
         if not waterpoints_dict:
             return self.t("no_district", district_name=district_name)
