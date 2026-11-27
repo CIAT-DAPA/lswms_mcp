@@ -440,3 +440,9 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
 
         summary = {"tell_user": f"Waterpoints matching status '{status.upper()}' found: {len(matched_waterpoints)}"}
         return json.dumps([summary] + matched_waterpoints, indent=2)
+    @mcp.tool(
+        name="dummy_tool",
+        description="Dummy tool for testing MCP execution"
+    )
+    async def dummy_tool() -> str:
+        return "dummy tool executed successfully"
