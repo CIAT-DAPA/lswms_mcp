@@ -7,6 +7,7 @@ from lswms_sdk.lswms_client import  WaterpointClient
 from lswms_sdk.lswms_models import Waterpoints,Monitored,Adm1,Adm2,SubseasonalForecast
 from lswms_sdk.context_builder import ContextBuilder  
 import re
+import traceback
 import numpy as np 
 from typing import Union, List
 import json 
@@ -189,18 +190,24 @@ def register_tools(mcp, client: WaterpointClient, ctx: ContextBuilder) -> None:
     @mcp.tool(name="get_waterpoint_status",
               description="Retrieves the current waterpoint status and associated advisory of a waterpoint based on its name")
     async def get_waterpoint_status(waterpoint_name:str,language:str="en",)->str:
-        wp_data = await client.get_waterpoints()
-        dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
-        matched_dicts = parse_name(dict_data, waterpoint_name)
-                
-        if not matched_dicts:
-            return (ctx.t("no_waterpoint", waterpoint=waterpoint_name))
-        advisory_data = await client.get_waterpoint_status(matched_dicts[0]["id"])
-        waterpoint_name_db = matched_dicts[0]['name']
+        try:
+            print(f"Executing {waterpoint_name}")
+            wp_data = await client.get_waterpoints()
+            dict_data = [item.model_dump() if hasattr(item, "model_dump") else item for item in wp_data]
+            matched_dicts = parse_name(dict_data, waterpoint_name)
+                    
+            if not matched_dicts:
+                return (ctx.t("no_waterpoint", waterpoint=waterpoint_name))
+            advisory_data = await client.get_waterpoint_status(matched_dicts[0]["id"])
+            waterpoint_name_db = matched_dicts[0]['name']
 
-        #TODO return with the context builder with STATUS and ADVISORY contexts
-        # return type(advisory_data)
-        return ctx.advisory_summary(advisory=advisory_data,waterpoint_name = waterpoint_name_db) 
+            #TODO return with the context builder with STATUS and ADVISORY contexts
+            # return type(advisory_data)
+            return ctx.advisory_summary(advisory=advisory_data,waterpoint_name = waterpoint_name_db) 
+        except Exception as e:
+            print("ERROR:", repr(e))
+            traceback.print_exc()
+            raise
     @mcp.tool(name="get_waterpoint_status_in_district",
         description=(
                     "Get waterpoints in a district filtered by status. Use this tool"
